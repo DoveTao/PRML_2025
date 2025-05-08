@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 # 超参数设置
 SEQ_LEN = 24  # 每个序列的时间步长
 BATCH_SIZE = 128  # 批量大小
-EPOCHS = 10  # 训练周期
+EPOCHS = 20  # 训练周期
 LR = 0.001  # 初始学习率
 HIDDEN_SIZE = 64  # LSTM 隐藏层大小
 NUM_LAYERS = 3  # LSTM 层数
