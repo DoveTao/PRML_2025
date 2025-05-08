@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 # 超参数设置
 SEQ_LEN = 24  # 每个序列的时间步长
 BATCH_SIZE = 128  # 批量大小
-EPOCHS = 50  # 训练周期
+EPOCHS = 10  # 训练周期
 LR = 0.001  # 初始学习率
 HIDDEN_SIZE = 64  # LSTM 隐藏层大小
 NUM_LAYERS = 3  # LSTM 层数
@@ -41,7 +41,6 @@ def load_and_scale(file, scaler=None, encoder=None, fit=False):
 
         # 合并数值特征和风向编码特征（确保总特征数为 11）
         data = np.concatenate([numeric_scaled, wind_encoded], axis=1)
-        print(f"Feature shape after concatenation (train): {data.shape}")  # 打印训练数据的特征形状
         return data, scaler, encoder
     else:
         # 使用训练数据的标准化器和编码器对测试数据进行转换
@@ -50,21 +49,13 @@ def load_and_scale(file, scaler=None, encoder=None, fit=False):
 
         # 合并数值特征和风向编码特征（确保总特征数为 11）
         data = np.concatenate([numeric_scaled, wind_encoded], axis=1)
-        print(f"Feature shape after concatenation (test): {data.shape}")  # 打印测试数据的特征形状
         return data
 
-
-# 重新检查数据
+# 加载数据
 train_data, scaler, encoder = load_and_scale('LSTM-Multivariate_pollution.csv', fit=True)
 test_data = load_and_scale('pollution_test_data1.csv', scaler, encoder=encoder)
 
-# 检查数据的形状，确保是 (样本数, 时间步数, 特征数)
-print("Train Data Shape:", train_data.shape)
-print("Test Data Shape:", test_data.shape)
-
-
 # 构建时间序列数据集
-# 修正 PollutionDataset 类中的数据处理
 class PollutionDataset(TensorDataset):
     def __init__(self, data, seq_len):
         self.X = []
@@ -89,26 +80,13 @@ class PollutionDataset(TensorDataset):
 train_data, scaler, encoder = load_and_scale('LSTM-Multivariate_pollution.csv', fit=True)
 test_data = load_and_scale('pollution_test_data1.csv', scaler, encoder=encoder)
 
-# # 检查数据的形状，确保特征数量正确
-# print(f"Train Data Shape: {train_data.shape}")
-# print(f"Test Data Shape: {test_data.shape}")
-
 # 构建数据集
 train_dataset = PollutionDataset(train_data, SEQ_LEN)
 test_dataset = PollutionDataset(test_data, SEQ_LEN)
 
-# # 检查数据集大小
-# print("Train Dataset Length:", len(train_dataset))
-# print("Test Dataset Length:", len(test_dataset))
-
 # 创建 DataLoader
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
 test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, drop_last=True)
-
-# 打印数据样本的形状
-for X_batch, y_batch in train_loader:
-    print(f"X_batch shape: {X_batch.shape}")
-    break  # 仅查看第一个批次
 
 # 定义 LSTM 模型
 class LSTMModel(nn.Module):
@@ -131,6 +109,10 @@ model = LSTMModel(input_size=input_size, hidden_size=HIDDEN_SIZE, num_layers=NUM
 criterion = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=4, verbose=True)
+
+# 转换为张量
+X_train_tensor = torch.tensor(train_data, dtype=torch.float32).to(DEVICE)
+X_test_tensor = torch.tensor(test_data, dtype=torch.float32).to(DEVICE)
 
 # 训练过程
 train_losses = []
@@ -166,18 +148,7 @@ for epoch in range(EPOCHS):
     # 学习率调度
     scheduler.step(avg_test_loss)
 
-    print(
-        f"Epoch {epoch + 1}/{EPOCHS}, Train Loss: {avg_train_loss:.4f}, Test Loss: {avg_test_loss:.4f}, LR: {optimizer.param_groups[0]['lr']:.6f}")
-
-# 绘制训练和测试损失曲线
-plt.figure(figsize=(10, 5))
-plt.plot(train_losses, label='Train Loss')
-plt.plot(test_losses, label='Test Loss')
-plt.xlabel('Epochs')
-plt.ylabel('Loss')
-plt.title('Train and Test Losses')
-plt.legend()
-plt.show()
+    print(f"Epoch {epoch + 1}/{EPOCHS}, Train Loss: {avg_train_loss:.4f}, Test Loss: {avg_test_loss:.4f}, LR: {optimizer.param_groups[0]['lr']:.6f}")
 
 # 进行预测
 model.eval()
@@ -195,14 +166,29 @@ with torch.no_grad():
 predictions = np.concatenate(predictions, axis=0)
 actuals = np.concatenate(actuals, axis=0)
 
-# 反标准化
-predictions_inv = scaler.inverse_transform(np.hstack([predictions, np.zeros((predictions.shape[0], 10))]))[:, 0]
-actuals_inv = scaler.inverse_transform(np.hstack([actuals, np.zeros((actuals.shape[0], 10))]))[:, 0]
+num_numeric_features = 7  # 数值特征的数量，即scaler处理的列数
+
+# 反标准化预测值和真实值
+# 确保预测数据和实际数据的形状与 scaler 训练时的形状一致
+train_predict_inv = scaler.inverse_transform(
+    np.concatenate((predictions, np.zeros((predictions.shape[0], num_numeric_features - 1))), axis=1))[:, 0]
+y_train_inv = scaler.inverse_transform(
+    np.concatenate((actuals, np.zeros((actuals.shape[0], num_numeric_features - 1))), axis=1))[:, 0]
+
+# 绘制训练和测试损失曲线
+plt.figure(figsize=(10, 5))
+plt.plot(train_losses, label='Train Loss')
+plt.plot(test_losses, label='Test Loss')
+plt.xlabel('Epochs')
+plt.ylabel('Loss')
+plt.title('Train and Test Losses')
+plt.legend()
+plt.show()
 
 # 绘制预测结果与真实结果对比
 plt.figure(figsize=(10, 5))
-plt.plot(actuals_inv, label='True PM2.5')
-plt.plot(predictions_inv, label='Predicted PM2.5')
+plt.plot(y_train_inv, label='True PM2.5')
+plt.plot(train_predict_inv, label='Predicted PM2.5')
 plt.xlabel('Time')
 plt.ylabel('Pollution')
 plt.title('True vs Predicted Pollution Levels')
@@ -210,8 +196,8 @@ plt.legend()
 plt.show()
 
 # 计算评估指标
-mse = mean_squared_error(actuals_inv, predictions_inv)
-mae = mean_absolute_error(actuals_inv, predictions_inv)
+mse = mean_squared_error(y_train_inv, train_predict_inv)
+mae = mean_absolute_error(y_train_inv, train_predict_inv)
 
 print(f"Mean Squared Error: {mse}")
 print(f"Mean Absolute Error: {mae}")
